@@ -5,7 +5,7 @@ set -o pipefail
 # config
 default_semvar_bump=${DEFAULT_BUMP:-minor}
 with_v=${WITH_V:-false}
-release_branches=${RELEASE_BRANCHES:-master,main}
+release_branches=${RELEASE_BRANCHES:-master}
 custom_tag=${CUSTOM_TAG}
 source=${SOURCE:-.}
 dryrun=${DRY_RUN:-false}
@@ -13,6 +13,7 @@ initial_version=${INITIAL_VERSION:-0.0.0}
 tag_context=${TAG_CONTEXT:-repo}
 suffix=${PRERELEASE_SUFFIX:-beta}
 verbose=${VERBOSE:-true}
+version_file=${VERSION_FILE:-./VERSION}
 
 cd ${GITHUB_WORKSPACE}/${source}
 
@@ -27,6 +28,7 @@ echo -e "\tINITIAL_VERSION: ${initial_version}"
 echo -e "\tTAG_CONTEXT: ${tag_context}"
 echo -e "\tPRERELEASE_SUFFIX: ${suffix}"
 echo -e "\tVERBOSE: ${verbose}"
+echo -e "\tVERSION FILE: ${version_file}"
 
 current_branch=$(git rev-parse --abbrev-ref HEAD)
 
@@ -46,11 +48,11 @@ git fetch --tags
 
 # get latest tag that looks like a semver (with or without v)
 case "$tag_context" in
-    *repo*) 
+    *repo*)
         tag=$(git for-each-ref --sort=-v:refname --format '%(refname)' | cut -d / -f 3- | grep -E "^v?[0-9]+.[0-9]+.[0-9]+$" | head -n1)
         pre_tag=$(git for-each-ref --sort=-v:refname --format '%(refname)' | cut -d / -f 3- | grep -E "^v?[0-9]+.[0-9]+.[0-9]+(-$suffix.[0-9]+)?$" | head -n1)
         ;;
-    *branch*) 
+    *branch*)
         tag=$(git tag --list --merged HEAD --sort=-v:refname | grep -E "^v?[0-9]+.[0-9]+.[0-9]+$" | head -n1)
         pre_tag=$(git tag --list --merged HEAD --sort=-v:refname | grep -E "^v?[0-9]+.[0-9]+.[0-9]+(-$suffix.[0-9]+)?$" | head -n1)
         ;;
@@ -67,18 +69,6 @@ else
     log=$(git log $tag..HEAD --pretty='%B')
 fi
 
-# get current commit hash for tag
-tag_commit=$(git rev-list -n 1 $tag)
-
-# get current commit hash
-commit=$(git rev-parse HEAD)
-
-if [ "$tag_commit" == "$commit" ]; then
-    echo "No new commits since previous tag. Skipping..."
-    echo ::set-output name=tag::$tag
-    exit 0
-fi
-
 # echo log if verbose is wanted
 if $verbose
 then
@@ -89,12 +79,12 @@ case "$log" in
     *#major* ) new=$(semver -i major $tag); part="major";;
     *#minor* ) new=$(semver -i minor $tag); part="minor";;
     *#patch* ) new=$(semver -i patch $tag); part="patch";;
-    * ) 
+    * )
         if [ "$default_semvar_bump" == "none" ]; then
-            echo "Default bump was set to none. Skipping..."; exit 0 
-        else 
-            new=$(semver -i "${default_semvar_bump}" $tag); part=$default_semvar_bump 
-        fi 
+            echo "Default bump was set to none. Skipping..."; exit 0
+        else
+            new=$(semver -i "${default_semvar_bump}" $tag); part=$default_semvar_bump
+        fi
         ;;
 esac
 
@@ -141,9 +131,27 @@ if $dryrun
 then
     echo ::set-output name=tag::$tag
     exit 0
-fi 
+fi
 
 echo ::set-output name=tag::$new
+
+# Create file with new version
+echo $new > $version_file
+git commit -m "Bump version to $new"
+
+# get current commit hash for tag
+tag_commit=$(git rev-list -n 1 $tag)
+
+# get current commit hash
+commit=$(git rev-parse HEAD)
+
+if [ "$tag_commit" == "$commit" ]; then
+    echo "No new commits since previous tag. Skipping..."
+    echo ::set-output name=tag::$tag
+    exit 0
+fi
+
+git push origin $RELEASE_BRANCHES
 
 # create local git tag
 git tag $new
